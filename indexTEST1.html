@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Star Map Projection</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: auto;
+        background-color: rgb(0, 0, 0);
+        animation: pulse 5s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0% {
+          background-position: 50% 50%;
+        }
+        50% {
+          background-position: 40% 40%;
+        }
+        100% {
+          background-position: 50% 50%;
+        }
+      }
+
+      #map-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map-container"></div>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+      // Container
+      const width = 800;
+      const height = 800;
+      const svg = d3
+        .select("#map-container")
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      //
+      // PROJECTION
+      //
+      let magnitudeScale2;
+      let initialRotation = [0, 100];
+      let rotation = 0;
+      const projection = d3
+        .geoOrthographic()
+        .translate([width / 2, height / 2])
+        .scale(width / 2)
+        .clipAngle(180)
+        .rotate(initialRotation);
+
+      //
+      const pathGenerator = d3.geoPath().projection(projection);
+      const connections = [];
+      let stars = [];
+      // const numConnections = 15;
+      const randomIndex = () => Math.floor(Math.random() * stars.length);
+
+      //
+      // ANIMATION
+      //
+      let elapsed = 0;
+      let elapsedRotation = 0; // Elapsed time for rotation animation
+      let elapsedConnections = 0; // Elapsed time for connections animation
+      let previousElapsedConnections = 0;
+      function animateRotation() {
+        const rotationSpeed = 0.01; // Adjust the rotation speed as desired
+        let startTime = null;
+        d3.timer((elapsed) => {
+          if (startTime === null) {
+            // Store the start time of the animation cycle
+            startTime = elapsed;
+          }
+          elapsedRotation = elapsed - startTime; // Update the elapsed time for rotation animation
+
+          elapsedConnections = elapsed - previousElapsedConnections;
+          // Calculate the new rotation based on the elapsed time
+          rotation = initialRotation[0] + elapsedRotation * rotationSpeed;
+
+          // Update the projection with the new rotation
+          projection.rotate([rotation, initialRotation[1]]);
+
+          // Redraw the stars with the updated projection
+          const circles = svg.selectAll(".star-circle");
+          const paths = svg.selectAll(".star-path");
+
+          circles
+            .attr("cx", (d) => {
+              const coords = projection(d.coordinates);
+              return coords ? coords[0] : -1000; // Set x-coordinate to -1000 for stars outside the projection
+            })
+            .attr("cy", (d) => {
+              const coords = projection(d.coordinates);
+              return coords ? coords[1] : -1000; // Set y-coordinate to -1000 for stars outside the projection
+            });
+
+          paths.attr("d", (d) => {
+            const source = projection(d.source.coordinates);
+            const target = projection(d.target.coordinates);
+
+            if (!source || !target) {
+              return ""; // Return an empty string for invalid coordinates
+            }
+
+            const dx = target[0] - source[0];
+            const dy = target[1] - source[1];
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            const radiusSource = magnitudeScale2(d.source.magnitude);
+            const angle = Math.atan2(dy, dx);
+            const radiusDiameter = radiusSource * 2;
+
+            const arcRadius = radiusDiameter / 2;
+            const arcStartAngle = angle - Math.PI / 2;
+            const arcEndAngle = angle + Math.PI / 2;
+
+            const arcGenerator = d3
+              .arc()
+              .innerRadius(arcRadius)
+              .outerRadius(arcRadius)
+              .startAngle(arcStartAngle)
+              .endAngle(arcEndAngle);
+
+            const arcPath = arcGenerator();
+
+            const point1 = [
+              source[0] + arcRadius * Math.cos(arcStartAngle),
+              source[1] + arcRadius * Math.sin(arcStartAngle),
+            ];
+            const point2 = [
+              source[0] + arcRadius * Math.cos(arcEndAngle),
+              source[1] + arcRadius * Math.sin(arcEndAngle),
+            ];
+
+            const totalDistance = Math.sqrt(dx * dx + dy * dy); // Total distance from source to target
+
+            const distanceTraveled =
+              (elapsedConnections * totalDistance) / 6000; // Distance traveled by point3 based on elapsed time
+
+            const distanceRatio = Math.min(distanceTraveled / totalDistance, 1); // Ratio of distance traveled to total distance (limited to 1)
+            const point3 = [
+              source[0] + dx * distanceRatio,
+              source[1] + dy * distanceRatio,
+            ];
+            return `M${point1[0]},${point1[1]} A${arcRadius},${arcRadius} 0 0,1 ${point2[0]},${point2[1]} L${point3[0]},${point3[1]} Z`;
+          });
+        });
+        function resetConnections() {
+          elapsedConnections = 0;
+          previousElapsedConnections = performance.now();
+          clearTimeout(resetTimer); // Clear the previous timer
+          resetTimer = setTimeout(resetConnections, 12000); // Reset elapsedConnections every 4 seconds
+        }
+
+        // Start the initial reset timer
+        resetTimer = setTimeout(resetConnections, 12000);
+      }
+
+      animateRotation();
+
+      function updateConnections() {
+        elapsedConnections = 0;
+        connections.length = 0;
+        const numConnections = Math.floor(Math.random() * 20) + 1;
+        for (let i = 0; i < numConnections; i++) {
+          const sourceIndex = randomIndex();
+          const targetIndex = randomIndex();
+          connections.push({
+            source: stars[sourceIndex],
+            target: stars[targetIndex],
+          });
+        }
+
+        const colorScale2 = d3
+          .scaleSequential(d3.interpolateOrRd)
+          .domain(d3.extent(stars, (d) => d.magnitude).reverse());
+
+        const group = svg.select(".star-group");
+
+        const paths = group.selectAll(".star-path").data(connections);
+
+        paths
+          .enter()
+          .append("path")
+          .attr("class", "star-path")
+          .merge(paths)
+          .attr("d", (d) => {
+            const source = projection(d.source.coordinates);
+            const target = projection(d.target.coordinates);
+
+            const dx = target[0] - source[0];
+            const dy = target[1] - source[1];
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            const radiusSource = magnitudeScale2(d.source.magnitude);
+            const angle = Math.atan2(dy, dx);
+            const radiusDiameter = radiusSource * 2;
+
+            const arcRadius = radiusDiameter / 2;
+            const arcStartAngle = angle - Math.PI / 8;
+            const arcEndAngle = angle + Math.PI / 8;
+
+            const arcGenerator = d3
+              .arc()
+              .innerRadius(arcRadius)
+              .outerRadius(arcRadius)
+              .startAngle(arcStartAngle)
+              .endAngle(arcEndAngle);
+
+            const arcPath = arcGenerator();
+
+            const point1 = [
+              source[0] + arcRadius * Math.cos(arcStartAngle),
+              source[1] + arcRadius * Math.sin(arcStartAngle),
+            ];
+            const point2 = [
+              source[0] + arcRadius * Math.cos(arcEndAngle),
+              source[1] + arcRadius * Math.sin(arcEndAngle),
+            ];
+            const totalDistance = Math.sqrt(dx * dx + dy * dy); // Total distance from source to target
+
+            const distanceTraveled =
+              (elapsedConnections * totalDistance) / 6000; // Distance traveled by point3 based on elapsed time
+
+            const distanceRatio = Math.min(distanceTraveled / totalDistance, 1); // Ratio of distance traveled to total distance (limited to 1)
+            const point3 = [
+              source[0] + dx * distanceRatio,
+              source[1] + dy * distanceRatio,
+            ];
+            return `M${point1[0]},${point1[1]} A${arcRadius},${arcRadius} 0 0,1 ${point2[0]},${point2[1]} L${point3[0]},${point3[1]} Z`;
+          })
+          .attr("fill", (d) => {
+            const radiusDiameter = magnitudeScale2(d.source.magnitude) * 2;
+            return colorScale2(radiusDiameter);
+          })
+          .attr("opacity", 0)
+          .attr("stroke-width", 1)
+          .attr("stroke", "none")
+          .transition()
+          .delay((d, i) => i * 10)
+          .duration(5000)
+          .attr("opacity", 1)
+          .transition()
+          .delay(500) // Delay before the transition out starts
+          .duration(6500)
+          .attr("opacity", 0);
+
+        paths
+          .exit()
+          .transition()
+          .delay((d, i) => i * 85 + 1500) // Delay before the transition out starts
+          .duration(2500)
+          .attr("opacity", 0)
+          .remove();
+
+        const starsCircles = group.selectAll(".star-circle");
+        starsCircles
+          .transition()
+          .duration(4000)
+          .attr("opacity", (d) => {
+            const isConnected = connections.some(
+              (connection) => connection.source === d || connection.target === d
+            );
+            return isConnected ? 1 : 0;
+          })
+          .transition()
+          .duration(8000) // Duration of the reappear effect
+          .attr("opacity", 0.8);
+      }
+      // ///////////////////////////////////////////////
+
+      function animateConnections() {
+        updateConnections();
+        setInterval(() => {
+          elapsedConnections = 0; // Reset elapsedConnections before starting the animation
+          updateConnections();
+        }, 12000);
+      }
+      d3.csv("stars.csv")
+        .then((data) => {
+          stars = data.map((star) => ({
+            name: star.ID,
+            coordinates: [
+              (parseFloat(star.RA_hour) +
+                parseFloat(star.RA_min) / 60 +
+                parseFloat(star.RA_sec) / 3600) *
+                15,
+              parseFloat(star.dec_deg) +
+                parseFloat(star.dec_min) / 60 +
+                parseFloat(star.dec_sec) / 3600,
+            ],
+            magnitude: parseFloat(star.magnitude),
+            radius: 1,
+          }));
+
+          const magnitudeScale = d3
+            .scaleLinear()
+            .domain(d3.extent(stars, (d) => d.magnitude))
+            .range([10, 1]);
+          magnitudeScale2 = d3
+            .scaleLinear()
+            .domain(d3.extent(stars, (d) => d.magnitude))
+            .range([10, 1]);
+
+          const colorScale = d3
+            .scaleSequential(d3.interpolateOrRd)
+            .domain(d3.extent(stars, (d) => d.magnitude));
+
+          const starGroup = svg.append("g").attr("class", "star-group");
+
+          const starsCircles = starGroup.selectAll(".star-circle").data(stars);
+
+          starsCircles
+            .enter()
+            .append("circle")
+            .attr("class", "star-circle")
+            .attr("cx", (d) => {
+              const coords = projection(d.coordinates);
+              return coords ? coords[0] : -1000;
+            })
+            .attr("cy", (d) => {
+              const coords = projection(d.coordinates);
+              return coords ? coords[1] : -1000;
+            })
+            .attr("r", (d) => magnitudeScale(d.magnitude))
+            .attr("fill", (d) => colorScale(d.magnitude))
+            .attr("stroke", "none");
+
+          animateConnections();
+        })
+        .catch((error) => {
+          console.error("Error loading star data:", error);
+        });
+    </script>
+  </body>
+</html>
