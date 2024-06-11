@@ -1,1 +1,1 @@
-![preview](Capture1.jpg)
+![preview](Capture1.JPG)
